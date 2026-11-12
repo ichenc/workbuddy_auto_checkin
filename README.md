@@ -67,6 +67,8 @@ Actions 页签左侧选本 workflow → **Run workflow**，等十几秒，飞书
 
 * 名字只用于卡片展示，顺序按 JSON 里写的顺序渲染。
 
+* **只填已经导出 token 的账号**：留空、占位符或没粘完整的条目会被自动跳过并在日志里告警，不打断其它账号；一个有效账号都没有时才报配置错误。
+
 * 也支持对象形式 `{"主号":{"token":"...="}}` 和数组形式 `[{"name":"主号","token":"...="}]`，见 `wb_auto.py` 的 `load_accounts()` 注释。
 
 * 只签一个账号时，可不建 `WB_ACCOUNTS`，改建单账号 Secret `WB_ACCESS_TOKEN` 也能跑。

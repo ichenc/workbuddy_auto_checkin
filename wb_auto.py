@@ -391,16 +391,20 @@ def push_feishu(webhook, rows, overall_ok):
 
 
 # ---------------------------------------------------------------- 多账号
-def _clean_token(value, where):
-    """只做「能落地就报清楚错」的检查：字符串、非空、够长、中间无空白。"""
+def _token_problem(value):
+    """返回无效原因；token 可用时返回 None。只做基础检查，不是格式校验。"""
+    if value is None:
+        return "未填 token"
     if not isinstance(value, str):
-        raise ValueError("%s 的 token 缺失或不是字符串" % where)
+        return "token 不是字符串"
     token = value.strip()
+    if not token:
+        return "token 为空"
     if len(token) < TOKEN_MIN_LEN:
-        raise ValueError("%s 的 token 太短（%d 字符），多半是复制不完整" % (where, len(token)))
+        return "token 太短（%d 字符），多半是复制不完整" % len(token)
     if any(ch.isspace() for ch in token):
-        raise ValueError("%s 的 token 中间夹了空格或换行，请清理后重新粘贴" % where)
-    return token
+        return "token 中间夹了空格或换行，请清理后重新粘贴"
+    return None
 
 
 def load_accounts():
@@ -411,6 +415,8 @@ def load_accounts():
       {"主号": {"token": "token"}, "小号": {"token": "token"}}
       [{"name": "主号", "token": "token"}, {"name": "小号", "token": "token"}]
 
+    条目 token 为空 / 太短 / 含空白时跳过该账号并告警，不打断整轮；
+    只有「一个可用账号都没有」时才判定配置错误。
     账号顺序 = 你写 JSON 的顺序（Python 的 dict 保留插入顺序），卡片也按这个顺序排。
     """
     raw = (os.environ.get("WB_ACCOUNTS") or "").strip()
@@ -418,7 +424,10 @@ def load_accounts():
         token = (os.environ.get("WB_ACCESS_TOKEN") or "").strip()
         if not token:
             return []
-        return [{"name": "默认", "token": _clean_token(token, "环境变量 WB_ACCESS_TOKEN")}]
+        problem = _token_problem(token)
+        if problem:
+            raise ValueError("WB_ACCESS_TOKEN %s" % problem)
+        return [{"name": "默认", "token": token}]
 
     try:
         data = json.loads(raw)
@@ -445,7 +454,15 @@ def load_accounts():
     for name, value in pairs:
         token = value.get("token") if isinstance(value, dict) else value
         label = name.strip() or "未命名"
-        accounts.append({"name": label, "token": _clean_token(token, "账号「%s」" % label)})
+        problem = _token_problem(token)
+        if problem:
+            log("  · 跳过账号「%s」：%s" % (label, problem))
+            continue
+        accounts.append({"name": label, "token": token.strip()})
+
+    if not accounts:
+        raise ValueError("没有可用账号：WB_ACCOUNTS 里所有条目都缺少或无效 token，"
+                         "请只填已从 refresh_token.exe 导出 token 的账号")
 
     seen = {}
     for acc in accounts:
@@ -483,7 +500,7 @@ def main():
         return 2
 
     webhook = os.environ.get("FEISHU_WEBHOOK")
-    endpoint = os.environ.get("WB_ENDPOINT") or DEFAULT_ENDPOINT
+    endpoint = (os.environ.get("WB_ENDPOINT") or DEFAULT_ENDPOINT).rstrip("/")
     if not webhook:
         log("缺少环境变量 FEISHU_WEBHOOK（本次不推送，只打印日志）")
     log("本轮共 %d 个账号：%s" % (len(accounts), "、".join(a["name"] for a in accounts)))
