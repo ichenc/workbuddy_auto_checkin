@@ -231,24 +231,45 @@ def _buddy_icon(result):
     return {'CLAIMED': '🐱', 'DEPARTED': '🐱', 'IN_TRIP': '🐱', 'ALREADY': '✅', 'INACTIVE': '💤', 'LIMIT_REACHED': '🛌', 'AUTH': '⚠️', 'NETWORK': '⚠️', 'ERROR': '⚠️', 'UNKNOWN_STATE': '❔', 'UNKNOWN': '❔'}.get(result, '🐾')
 
 def build_card(rows, overall_ok):
-    color = 'green' if overall_ok else 'red'
     success_count = sum((1 for _, ok, _, _ in rows if ok))
     bj = time.strftime('%m-%d %H:%M', time.localtime(time.time() + 8 * 3600))
-    title = 'Buddy 加油站 · 全部成功' if overall_ok else 'Buddy 加油站 · 部分失败'
+    if overall_ok:
+        template, emoji, title = 'green', '✅', 'Buddy 加油站 · 全部成功'
+    elif success_count == 0:
+        template, emoji, title = 'red', '❌', 'Buddy 加油站 · 全部失败'
+    else:
+        template, emoji, title = 'orange', '⚠️', 'Buddy 加油站 · 部分成功'
     elements = []
-    elements.append({'tag': 'div', 'text': {'tag': 'lark_md', 'content': '**%d/%d** 个账号签到成功 · 北京时间 %s' % (success_count, len(rows), bj)}})
+    elements.append({'tag': 'div', 'text': {'tag': 'lark_md',
+        'content': '%s **%d / %d** 个账号签到成功 · 北京时间 %s' % (emoji, success_count, len(rows), bj)}})
+    elements.append({'tag': 'hr'})
     for idx, (name, ok, checkin, buddy) in enumerate(rows):
         if idx > 0:
             elements.append({'tag': 'hr'})
-        checkin_icon = '✅' if ok else '❌'
+        status_icon = '✅' if ok else '❌'
         checkin_report = _clean_card_text(checkin.get('report') or '无结论')
         buddy_icon = _buddy_icon(buddy.get('result'))
         buddy_report = _clean_card_text(buddy.get('report') or '无结论')
-        elements.append({'tag': 'div', 'text': {'tag': 'lark_md', 'content': '**%s**\u3000%s' % (name, checkin_icon)}})
-        elements.append({'tag': 'div', 'fields': [{'is_short': True, 'text': {'tag': 'lark_md', 'content': '**签到**\n%s %s' % (checkin_icon, checkin_report)}}, {'is_short': True, 'text': {'tag': 'lark_md', 'content': '**猫猫旅行**\n%s %s' % (buddy_icon, buddy_report)}}]})
+        elements.append({'tag': 'div', 'text': {'tag': 'lark_md',
+            'content': '**%s** %s' % (_clean_card_text(name), status_icon)}})
+        elements.append({'tag': 'div', 'fields': [
+            {'is_short': True, 'text': {'tag': 'lark_md',
+             'content': '**📅 签到**' + chr(10) + '%s %s' % (status_icon, checkin_report)}},
+            {'is_short': True, 'text': {'tag': 'lark_md',
+             'content': '**🐱 猫猫旅行**' + chr(10) + '%s %s' % (buddy_icon, buddy_report)}},
+        ]})
     elements.append({'tag': 'hr'})
-    elements.append({'tag': 'note', 'elements': [{'tag': 'plain_text', 'content': '脚本幂等：已签不重领，已派不重派；结果以本卡片为准'}]})
-    return {'msg_type': 'interactive', 'card': {'config': {'wide_screen_mode': True}, 'header': {'template': color, 'title': {'tag': 'plain_text', 'content': title}, 'subtitle': {'tag': 'plain_text', 'content': '%d 个账号 · 每日自动化' % len(rows)}}, 'elements': elements}}
+    elements.append({'tag': 'note', 'elements': [
+        {'tag': 'plain_text', 'content': '🔁 脚本幂等：已签不重领，已派不重派 · 结果以本卡片为准'}]})
+    return {'msg_type': 'interactive', 'card': {
+        'config': {'wide_screen_mode': True},
+        'header': {
+            'template': template,
+            'title': {'tag': 'plain_text', 'content': '%s %s' % (emoji, title)},
+            'subtitle': {'tag': 'plain_text', 'content': '%d 个账号 · 每日自动化' % len(rows)},
+        },
+        'elements': elements,
+    }}
 
 def push_feishu(webhook, rows, overall_ok):
     data = json.dumps(build_card(rows, overall_ok)).encode('utf-8')
