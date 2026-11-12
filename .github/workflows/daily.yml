@@ -1,0 +1,91 @@
+name: Buddy 加油站每日自动化（多账号）
+
+on:
+  schedule:
+    # GitHub 的 cron 是尽力而为：高负载时会延迟，甚至静默丢弃整次运行。
+    # 因此设三个时段互为备份 —— 只要有一个跑到，当天就完成了。
+    # 脚本是幂等的：已签过只会返回「今日已签过」，名额用完不会重派，
+    # 所以多触发不会重复领取；三个时段每次都跑「全部账号」，冗余才成立。
+    #
+    # 间隔取 6 小时，是因为猫猫旅行时长最长 4 小时（travel/config 的
+    # duration_hours_max），这样下一轮运行时它必定已经到家，可以领回礼物。
+    # 三个点都落在 :10，避开 GitHub 文档提示的整点高负载期。
+    #
+    # 注意 cron 按 UTC 计时，下面是 UTC，括号内为北京时间（UTC+8）。
+    - cron: "10 0 * * *"    # 00:10 UTC = 08:10 北京（主时段）
+    - cron: "10 6 * * *"    # 06:10 UTC = 14:10 北京（备份）
+    - cron: "10 12 * * *"   # 12:10 UTC = 20:10 北京（备份）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wb-daily
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    # 多账号是串行执行，每个账号约 2~6 秒（含新建 TLS 连接）。
+    # 20 分钟够 30 个左右的账号；账号更多时调大这里。
+    timeout-minutes: 20
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 定位 Python 解释器
+        id: py
+        # 解释器路径不写死版本号，动态取 runner 上可用的解释器
+        run: |
+          set -euo pipefail
+          PY="$(command -v python3 || command -v python || true)"
+          if [ -z "$PY" ]; then
+            echo "未找到可用的 Python 解释器" >&2
+            exit 1
+          fi
+          "$PY" -c 'import sys; print("使用解释器:", sys.executable, sys.version.split()[0])'
+          echo "python_path=$PY" >> "$GITHUB_OUTPUT"
+
+      - name: 执行签到与派猫猫（全部账号）
+        id: run
+        env:
+          # 多账号：JSON，形如 {"主号":"token1","小号":"token2"}
+          WB_ACCOUNTS: ${{ secrets.WB_ACCOUNTS }}
+          # 兼容单账号：没配 WB_ACCOUNTS 时脚本会退回这一条（未创建则该变量为空）
+          WB_ACCESS_TOKEN: ${{ secrets.WB_ACCESS_TOKEN }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          WB_ENDPOINT: https://copilot.tencent.com
+          WB_RESULT_FILE: ${{ runner.temp }}/wb_result.md
+        run: |
+          set -uo pipefail
+          PY="${{ steps.py.outputs.python_path }}"
+          set +e
+          "$PY" wb_auto.py
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          # 全部账号签到成功才算成功（exit 0）；有账号没签成就 exit 1，
+          # 但这里统一以 0 收尾，只用 warning 提示，避免把整轮跑成红色。
+          if [ "$code" -ne 0 ]; then
+            echo "::warning::本轮存在未完成的账号，详见上方日志与飞书卡片"
+          fi
+          exit 0
+
+      - name: 汇总
+        if: always()
+        env:
+          RESULT_FILE: ${{ runner.temp }}/wb_result.md
+        run: |
+          set -uo pipefail
+          {
+            echo "### Buddy 加油站每日自动化（多账号）"
+            echo ""
+            echo "- 运行时间：$(date -u '+%Y-%m-%d %H:%M:%S UTC')（cron 为 UTC）"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$RESULT_FILE" ]; then
+            cat "$RESULT_FILE" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- 未产出结论文案，请查看上方日志" >> "$GITHUB_STEP_SUMMARY"
+          fi

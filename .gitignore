@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.tmp_token
+.tmp_exe_*
+result.json
+.env
+token.jpg
+token*.jpg
+build/
+dist/
+*.spec
